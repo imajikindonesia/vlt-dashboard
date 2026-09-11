@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VLT Pipeline Monitor</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+body{font-family:'Inter',sans-serif;background:#09090b;color:#e4e4e7}
+.font-mono{font-family:'JetBrains Mono',monospace}
+.pulse-dot{animation:pr 2s ease-in-out infinite}
+@keyframes pr{0%,100%{opacity:1}50%{opacity:.4}}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:#18181b}
+::-webkit-scrollbar-thumb{background:#3f3f46;border-radius:3px}
+.img-thumb{width:100%;aspect-ratio:4/5;object-fit:cover;border-radius:8px;border:1px solid #27272a}
+.drop-zone{border:2px dashed #3f3f46;border-radius:12px;transition:all .2s}
+.drop-zone:hover,.drop-zone.drag-over{border-color:#8b5cf6;background:rgba(139,92,246,.05)}
+.gallery-img{width:100%;object-fit:cover;border-radius:8px;border:1px solid #27272a;transition:transform .2s}
+.gallery-img:hover{transform:scale(1.02)}
+.chk{width:20px;height:20px;border-radius:6px;border:2px solid #52525b;display:flex;align-items:center;justify-content:center;transition:all .15s;flex-shrink:0;cursor:pointer}
+.chk:hover{border-color:#8b5cf6}
+.chk.on{background:#8b5cf6;border-color:#8b5cf6}
+.num-input{width:56px;background:#18181b;border:1px solid #3f3f46;border-radius:6px;padding:2px 8px;color:#e4e4e7;font-family:'JetBrains Mono',monospace;font-size:12px;text-align:center}
+.num-input:focus{outline:none;border-color:#8b5cf6}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(4px);z-index:50;display:flex;align-items:center;justify-content:center;padding:16px}
+.modal{background:#18181b;border:1px solid #3f3f46;border-radius:16px;max-width:640px;width:100%;max-height:85vh;overflow-y:auto}
+</style>
+</head>
+<body class="min-h-screen">
+<div id="app"></div>
+<div id="modal"></div>
+<script>
+const STEPS=[
+ {s:0,n:'Reference Qualification',p:'refqualifier',g:0},
+ {s:1,n:'DP Extraction + Reverse Test',p:'dpextractor',g:0},
+ {s:2,n:'Material Analysis',p:'materialanalyst',g:0},
+ {s:3,n:'Brand Matrix',p:'brandstrategist',g:1},
+ {s:4,n:'Transfer Mapping',p:'transfermapper',g:0},
+ {s:4.5,n:'Scene Architecture',p:'scenearchitect',g:1},
+ {s:5,n:'Mode Selection',p:'modeselector',g:1},
+ {s:6,n:'Prompt Architecture',p:'promptarchitect',g:0},
+ {s:6.5,n:'Generate Base Image',p:'imagegen',g:0},
+ {s:7,n:'QA Gate + Anti-AI',p:'qagate',g:0},
+ {s:8,n:'Variant Generation',p:'variantworker',g:0},
+ {s:9,n:'Curation & Final',p:'curator',g:0},
+];
+const SC={
+ done:{bg:'bg-emerald-500/10',br:'border-emerald-500/30',tx:'text-emerald-400',dt:'bg-emerald-400',lb:'Done',ic:'\u2713'},
+ running:{bg:'bg-amber-500/10',br:'border-amber-500/30',tx:'text-amber-400',dt:'bg-amber-400',lb:'Running',ic:'\u25c9',pl:1},
+ blocked:{bg:'bg-orange-500/10',br:'border-orange-500/30',tx:'text-orange-400',dt:'bg-orange-400',lb:'Blocked',ic:'\u2298'},
+ needs_input:{bg:'bg-violet-500/10',br:'border-violet-500/30',tx:'text-violet-400',dt:'bg-violet-400',lb:'Butuh Kamu',ic:'\u25c8',pl:1},
+ failed:{bg:'bg-red-500/10',br:'border-red-500/30',tx:'text-red-400',dt:'bg-red-400',lb:'Failed',ic:'\u2717'},
+ todo:{bg:'bg-zinc-800/30',br:'border-zinc-700/30',tx:'text-zinc-600',dt:'bg-zinc-700',lb:'Menunggu',ic:'\u25cb'},
+};
+
+// Contoh prompt LENGKAP hasil Phase 2
+const FULL_PROMPT=`[SUBJECT & COMPOSITION]
+A 30ml amber glass serum bottle with matte white minimalist label, positioned at the right-third intersection of a 4:5 vertical frame. Bottle occupies 62% of frame height, standing upright with a subtle 3\u00b0 tilt toward camera-left. Dropper cap in brushed aluminum catches a narrow specular highlight along its upper-left edge. Negative space occupies the left 38% of frame, broken only by a soft cast shadow stretching diagonally toward lower-left.
+
+[SCENE & PROPS]
+Surface: honed travertine slab, warm beige with visible natural pitting and one hairline vein running diagonally beneath the bottle.
+Primary prop: a single fresh eucalyptus sprig laid at 7 o'clock from the bottle base, three leaves visible, one leaf slightly curled at the tip.
+Accent props: two water droplets on the travertine at 4 o'clock, one 3mm one 5mm, positioned asymmetrically \u2014 not mirrored.
+Living element: barely visible steam wisp from a warm surface just outside frame-right, suggesting a morning skincare ritual.
+
+[CAMERA & LIGHTING]
+Two-point setup. Key light: soft-boxed, entering from upper-left at 42\u00b0 azimuth, 38\u00b0 elevation, color temperature 4200K. Fill: bounce card camera-right at -1.7 stops, no direct source. Shadow density 28%, edge falloff soft over approximately 14px at print scale. Background seamless in warm gray #EDEAE6, unlit gradient darkening 8% toward the upper corners. Depth of field shallow: label plane and bottle shoulder in critical focus, eucalyptus sprig falling to gentle blur, background fully diffused.
+
+[COLOR & STYLE]
+Dominant palette: amber #B4762D, warm travertine #D8CFC2, muted sage #8A9A82, backdrop warm gray #EDEAE6. Overall contrast medium-low. Highlight rolloff gentle, no clipping on the glass specular. Saturation restrained \u2014 amber reads rich but not neon.
+
+[IMPERFECTIONS \u2014 REQUIRED]
+- Travertine surface shows natural pitting and micro-variation in tone, not a uniform texture map
+- Eucalyptus sprig is not parallel to any frame edge; one leaf curls slightly and breaks the silhouette
+- A single dust particle is visible suspended in the key light beam near the bottle shoulder
+- Bottle label has a barely perceptible 1\u00b0 misalignment, as a real applied label would
+- Shadow edge is not uniformly soft; it tightens slightly where the bottle meets the surface
+
+[PHOTOGRAPHIC REALISM]
+- Camera: Sony A7R IV, 100mm macro f/5.6
+- Film character: Kodak Portra 400 grain structure, fine and warm-biased
+- Sensor noise: subtle luminance noise present in shadow areas, equivalent to ISO 400
+- Lens character: minimal chromatic aberration at extreme frame edges, natural vignette -0.3 stops at corners
+- Focus: critical plane at label face, falloff beginning 4cm behind
+
+[TEXT REQUIREMENTS \u2014 FIXED]
+Label must render exactly: "30ml" \u2014 lowercase ml, no space, no period.
+Secondary text "BPOM NA18201900123" must be legible at 100% crop.
+
+[NEGATIVE]
+CGI render, 3D render, digital art, illustration, plastic texture, waxy surface, over-smooth, hyperrealistic, 8K ultra detailed, artificial glow, perfect symmetry, floating object, duplicated bottle, garbled text, watermark`;
+
+let PROJECTS=[{
+ id:'vlt-20260910-001',brand:'Lentiven',product:'Serum Vitamin C',status:'running',
+ created:'2026-09-10 14:20',
+ req:{hero:true,catalog:true,catalogSku:5,campaign:true,campaignScene:3},
+ refImages:[],prodImages:[],
+ model:'openai/gpt-image-2',modelReason:'Ada teks kritis: 30ml, BPOM',
+ results:{hero:[],catalog:[],campaign:[]},
+ prompts:{hero:FULL_PROMPT,catalog:null,campaign:[]},
+ gate:{step:4.5,task_id:'',title:'Scene Concept Approval',
+  content:`SCENE ARCHITECT \u2014 3 KONSEP SIAP DIREVIEW
+
+\u2500\u2500\u2500 SCENE 1: "Morning Ritual" \u2500\u2500\u2500
+Surface: travertine honed, warm beige dengan pitting natural
+Props utama: eucalyptus sprig segar (3 daun, 1 melengkung)
+Props aksen: 2 tetes air asimetris (3mm dan 5mm)
+Elemen hidup: uap samar dari luar frame kanan
+Cahaya: key upper-left 42\u00b0/38\u00b0 di 4200K, fill -1.7 stop
+Palet: amber, travertine warm, sage muted, gray hangat
+Komposisi: produk di intersection kanan, negative space kiri 38%
+Storytelling: "serum ini bagian dari pagi yang tenang"
+Detail killer: partikel debu melayang di light beam
+Alasan: target 25-35 suka aesthetic clean-girl, ritual pagi
+Imperfections: pitting travertine, sprig tidak paralel, debu
+
+\u2500\u2500\u2500 SCENE 2: "After Rain" \u2500\u2500\u2500
+Surface: beton halus basah dengan genangan tipis
+Props utama: daun monstera dengan water droplets
+Props aksen: refleksi cahaya jendela di genangan
+Cahaya: blue hour ambient + 1 warm accent lower-left
+Palet: cool blue, amber, concrete gray, deep green
+Storytelling: "kesegaran setelah hujan"
+Detail killer: refleksi produk terpotong oleh riak air
+Alasan: kontras dengan Scene 1, untuk variasi feed
+Imperfections: riak air asimetris, refleksi diffused
+
+\u2500\u2500\u2500 SCENE 3: "Vanity Corner" \u2500\u2500\u2500
+Surface: marmer carrara dengan vein abu halus
+Props utama: cermin bulat vintage (sebagian frame)
+Props aksen: 3 kapas, 1 pita satin krem
+Cahaya: golden hour dari kiri, shadow panjang
+Palet: cream, gold muted, amber, putih marmer
+Storytelling: "produk premium di ruang personal"
+Detail killer: bayangan produk jatuh di cermin
+Alasan: positioning luxury untuk audience premium
+Imperfections: pita tidak simetris, marmer vein natural
+
+\u2500\u2500\u2500 CATALOG TEMPLATE \u2500\u2500\u2500
+LOCKED untuk semua 5 SKU:
+- Background: seamless warm gray #EDEAE6
+- Lighting: key upper-left 45\u00b0 4200K, fill -1.5 stop
+- Shadow: density 25%, soft 12px edge
+- Camera: produk occupy 60% vertical frame
+- Grading: contrast medium-low, warm bias
+
+\u2500\u2500\u2500 HERO CONCEPT \u2500\u2500\u2500
+Clean shot, minimal props, produk 68% frame
+Label terbaca penuh, 1:1 dan 4:5`},
+ steps:{0:{st:'done',v:'LAYAK',sc:'21/25',d:'58s'},1:{st:'done',r:1,d:'12m'},
+        2:{st:'done',d:'3m'},3:{st:'done',d:'2m'},4:{st:'done',d:'1m'},
+        4.5:{st:'needs_input',act:'3 scene concept siap direview'},
+        5:{st:'todo'},6:{st:'todo'},6.5:{st:'todo'},7:{st:'todo'},8:{st:'todo'},9:{st:'todo'}},
+ budget:{u:2,l:60},
+ events:[
+  {t:'14:20',m:'Brief masuk via Telegram',ty:'info'},
+  {t:'14:21',m:'Output: Hero + Catalog (5 SKU) + Campaign (3 scene)',ty:'info'},
+  {t:'14:22',m:'Step 0 RefQualifier: LAYAK 21/25',ty:'done'},
+  {t:'14:35',m:'Step 1 Reverse Test PASS 4/4',ty:'done'},
+  {t:'14:38',m:'Step 2 Material: kaca amber, label putih',ty:'done'},
+  {t:'14:40',m:'Step 3 Brand Matrix disetujui',ty:'done'},
+  {t:'14:42',m:'Step 4.5 Scene Architect: 3 konsep siap',ty:'warn'},
+ ]
+},{
+ id:'vlt-20260830-001',brand:'Geia',product:'Baju Tidur',status:'completed',
+ created:'2026-08-30 21:20',
+ req:{hero:true,catalog:false,catalogSku:0,campaign:true,campaignScene:2},
+ refImages:[],prodImages:[],
+ model:'google/gemini-3.1-flash-image-preview',modelReason:'Tanpa teks kritis',
+ results:{hero:[],catalog:[],campaign:[]},
+ prompts:{hero:FULL_PROMPT.replace(/30ml amber glass serum bottle/g,'waffle-textured cotton sleepwear set'),catalog:null,
+  campaign:['Scene "Morning Ritual" \u2014 lihat prompt lengkap','Scene "Slow Evening" \u2014 lihat prompt lengkap']},
+ gate:null,
+ steps:{0:{st:'done',v:'LAYAK BERSYARAT',sc:'19/25',d:'58s'},1:{st:'done',r:4,d:'47m'},
+        2:{st:'done',d:'4m'},3:{st:'done',d:'3m'},4:{st:'done',d:'2m'},4.5:{st:'done',d:'6m'},
+        5:{st:'done',d:'2m'},6:{st:'done',d:'5m'},6.5:{st:'done',d:'52s'},
+        7:{st:'done',v:'LOLOS 4/4',d:'3m'},8:{st:'done',r:1,d:'11m'},9:{st:'done',d:'4m'}},
+ budget:{u:17,l:20},
+ events:[
+  {t:'21:20',m:'Pipeline dimulai',ty:'info'},
+  {t:'21:42',m:'Reverse test PASS setelah mode switch',ty:'done'},
+  {t:'22:01',m:'Brand Matrix disetujui',ty:'done'},
+  {t:'22:08',m:'Scene concept disetujui \u2014 2 scene',ty:'done'},
+  {t:'22:22',m:'QA Gate LOLOS 4/4 termasuk Anti-AI',ty:'done'},
+  {t:'22:40',m:'Selesai \u2014 3 hero + 14 campaign',ty:'done'},
+ ]
+}];
+
+let S={sel:PROJECTS[0].id,exp:null,tab:'input',gal:'hero',modal:null};
+const P=()=>PROJECTS.find(x=>x.id===S.sel);
+
+// ═══ API CONFIG ═══
+const API={
+ url:'',          // kosong = relative path, proxy Vercel yang forward ke VPS
+ token:'',        // token sekarang di server-side (Vercel env var), tidak perlu di client
+ connected:false,
+ lastCheck:null
+};
+
+async function apiCall(path,method='GET',body=null){
+ try{
+  const opt={method,headers:{'Authorization':'Bearer '+API.token,'Content-Type':'application/json'}};
+  if(body)opt.body=JSON.stringify(body);
+  const r=await fetch(API.url+path,opt);
+  API.connected=r.ok;API.lastCheck=new Date();
+  return await r.json();
+ }catch(e){API.connected=false;API.lastCheck=new Date();return null}
+}
+
+async function checkApi(){
+ const r=await apiCall('/api/health');
+ renderConnBadge();
+ return r&&r.status==='ok';
+}
+
+async function sendGate(taskId,action,note){
+ const r=await apiCall('/api/gate','POST',{task_id:taskId,action,note});
+ return r&&r.success;
+}
+
+function renderConnBadge(){
+ const el=document.getElementById('conn-badge');
+ if(!el)return;
+ el.innerHTML=API.connected
+  ?'<div class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"></div><span class="text-[10px] text-emerald-400">Hermes Connected</span>'
+  :'<div class="w-2 h-2 rounded-full bg-red-400"></div><span class="text-[10px] text-red-400">Offline</span>';
+}
+
+// auto-refresh tiap 30 detik
+setInterval(checkApi,30000);
+
+function badge(s){const c=SC[s]||SC.todo;
+ return `<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium ${c.bg} ${c.tx} border ${c.br}"><span class="w-1.5 h-1.5 rounded-full ${c.dt}${c.pl?' pulse-dot':''}"></span>${c.lb}</span>`}
+
+function bar(u,l,label){const p=Math.min(u/l*100,100);
+ const col=p>80?'bg-red-500':p>50?'bg-amber-500':'bg-emerald-500';
+ return `<div><div class="text-[10px] text-zinc-500 mb-1">${label}</div><div class="flex items-center gap-2"><div class="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden"><div class="h-full ${col} rounded-full transition-all" style="width:${p}%"></div></div><span class="text-[10px] text-zinc-400 font-mono">${u}/${l}</span></div></div>`}
+
+function estimate(r){let n=0;if(r.hero)n+=3;if(r.catalog)n+=6*(r.catalogSku||0);if(r.campaign)n+=7*(r.campaignScene||0);return n}
+
+// ═══ INTERACTIVE CHECKLIST ═══
+function tabInput(p){
+ const r=p.req,total=estimate(r),warn=total>30;
+
+ function row(key,on,title,desc,countKey,countLabel,perUnit){
+  const counter=on&&countKey?`<div class="flex items-center gap-2 mt-2"><span class="text-[11px] text-zinc-500">${countLabel}</span><input type="number" min="1" max="50" value="${r[countKey]}" onclick="event.stopPropagation()" oninput="setCount('${countKey}',this.value)" class="num-input"/><span class="text-[10px] text-zinc-600 font-mono">\u00d7 ${perUnit} = ${r[countKey]*perUnit} foto</span></div>`
+   :on?`<div class="text-[10px] text-zinc-600 mt-1.5 font-mono">${perUnit} foto \u00b7 1:1 + 4:5</div>`:'';
+  return `<div onclick="tglReq('${key}')" class="flex gap-3 p-3 rounded-lg border cursor-pointer ${on?'bg-violet-500/5 border-violet-500/30':'bg-zinc-900/30 border-zinc-800 hover:border-zinc-700'} transition-all">
+   <div class="chk${on?' on':''}">${on?'<span class="text-white text-xs">\u2713</span>':''}</div>
+   <div class="flex-1 min-w-0">
+    <div class="text-sm font-medium ${on?'text-zinc-100':'text-zinc-400'}">${title}</div>
+    <div class="text-[11px] text-zinc-500 mt-0.5">${desc}</div>${counter}</div></div>`}
+
+ const checklist=`<div class="space-y-2">
+  ${row('hero',r.hero,'Hero Shot','Foto utama produk \u2014 thumbnail marketplace & profile',null,null,3)}
+  ${row('catalog',r.catalog,'Product Catalog','Foto sistematis multi-angle, konsisten antar SKU','catalogSku','Jumlah SKU',6)}
+  ${row('campaign',r.campaign,'Campaign Content','Konten bertema untuk social media','campaignScene','Jumlah scene',7)}
+ </div>
+ <div class="mt-3 p-3 rounded-lg ${warn?'bg-amber-500/10 border border-amber-500/30':'bg-zinc-900/50 border border-zinc-800'}">
+  <div class="flex items-center justify-between">
+   <span class="text-xs ${warn?'text-amber-400':'text-zinc-400'}">Estimasi total generate</span>
+   <span class="text-sm font-mono ${warn?'text-amber-400':'text-zinc-200'}">${total} gambar</span></div>
+  ${warn?'<div class="text-[10px] text-amber-400/70 mt-1">Lebih dari 30 gambar \u2014 pipeline minta konfirmasi sebelum jalan</div>':''}
+  ${total===0?'<div class="text-[10px] text-red-400/70 mt-1">Pilih minimal satu kebutuhan output</div>':''}</div>`;
+
+ function grid(imgs,type,label){
+  const th=imgs.map((src,i)=>`<div class="relative group"><img src="${src}" class="img-thumb"/><button onclick="event.stopPropagation();rmImg('${type}',${i})" class="absolute top-1 right-1 w-5 h-5 bg-red-600 text-white rounded-full text-[10px] opacity-0 group-hover:opacity-100 flex items-center justify-center">\u2717</button></div>`).join('');
+  const add=`<div onclick="upImg('${type}')" class="drop-zone flex flex-col items-center justify-center aspect-[4/5] cursor-pointer" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="dropImg(event,'${type}')"><div class="text-2xl text-zinc-600">+</div><div class="text-[10px] text-zinc-600 mt-1">Upload</div></div>`;
+  return `<div><div class="text-xs text-zinc-400 font-medium mb-2">${label}</div><div class="grid grid-cols-3 gap-2">${th}${add}</div></div>`}
+
+ return `<div class="space-y-3">
+  <div class="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4">
+   <div class="flex items-center justify-between mb-3">
+    <h3 class="text-xs font-semibold text-zinc-300 uppercase tracking-wider">Kebutuhan Output</h3>
+    <span class="text-[10px] text-zinc-600">klik untuk pilih</span></div>
+   ${checklist}</div>
+  <div class="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4">
+   <div class="flex items-center justify-between mb-3">
+    <h3 class="text-xs font-semibold text-zinc-300 uppercase tracking-wider">Input Images</h3>
+    <span class="text-[10px] text-zinc-600">drag & drop atau klik</span></div>
+   <div class="grid grid-cols-2 gap-4">${grid(p.refImages,'ref','Foto Referensi Visual')}${grid(p.prodImages,'prod','Foto Produk Target')}</div></div>
+  <div class="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4">
+   <h3 class="text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-3">Model Image Generation</h3>
+   <div class="flex items-center justify-between">
+    <div><div class="text-sm text-zinc-200 font-mono">${p.model}</div><div class="text-[11px] text-zinc-500 mt-0.5">${p.modelReason}</div></div>
+    <span class="px-2 py-1 rounded-md bg-violet-500/10 border border-violet-500/30 text-[10px] text-violet-400">auto-routed</span></div></div></div>`}
+
+function stepCard(d,data,ex){
+ const st=data?.st||'todo',c=SC[st]||SC.todo;
+ const gate=d.g?'<div class="absolute -top-1.5 -right-1.5 bg-violet-600 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full shadow-lg z-10">GATE</div>':'';
+ let det='';
+ if(ex&&data){
+  if(data.v)det+=`<div class="flex justify-between text-xs"><span class="text-zinc-500">Verdict</span><span class="text-zinc-300 font-medium">${data.v}</span></div>`;
+  if(data.sc)det+=`<div class="flex justify-between text-xs"><span class="text-zinc-500">Score</span><span class="text-zinc-300 font-mono">${data.sc}</span></div>`;
+  if(data.r)det+=`<div class="flex justify-between text-xs"><span class="text-zinc-500">Retries</span><span class="text-amber-400 font-mono">${data.r}x</span></div>`;
+  if(data.d)det+=`<div class="flex justify-between text-xs"><span class="text-zinc-500">Durasi</span><span class="text-zinc-300 font-mono">${data.d}</span></div>`;
+  if(data.act)det+=`<div class="text-xs text-violet-400/90 mt-1 italic">${data.act}</div>`;
+ }
+ const dw=det?`<div class="mt-2.5 pt-2.5 border-t border-zinc-700/40 space-y-1.5">${det}</div>`:'';
+ return `<div onclick="tgl(${d.s})" class="relative border rounded-lg p-3 cursor-pointer transition-all hover:translate-x-0.5 ${c.bg} ${c.br}">${gate}
+  <div class="flex items-center gap-3">
+   <div class="w-8 h-8 rounded-lg ${c.bg} border ${c.br} flex items-center justify-center shrink-0"><span class="text-sm ${c.tx}">${c.ic}</span></div>
+   <div class="flex-1 min-w-0">
+    <div class="flex items-center gap-2"><span class="text-[10px] text-zinc-600 font-mono">S${d.s}</span>
+     <span class="text-sm font-medium ${st==='todo'?'text-zinc-500':'text-zinc-200'} truncate">${d.n}</span></div>
+    <div class="flex items-center gap-2 mt-0.5"><span class="text-[10px] text-zinc-600">@${d.p}</span>${badge(st)}</div></div></div>${dw}</div>`}
+
+function tabResults(p){
+ const r=p.req,cats=[];
+ if(r.hero)cats.push({id:'hero',label:'Hero',count:p.results.hero.length,target:3});
+ if(r.catalog)cats.push({id:'catalog',label:'Catalog',count:p.results.catalog.length,target:r.catalogSku*6});
+ if(r.campaign)cats.push({id:'campaign',label:'Campaign',count:p.results.campaign.length,target:r.campaignScene*7});
+ if(!cats.length)return '<div class="bg-zinc-900/50 border border-zinc-800 rounded-xl p-8 text-center"><div class="text-sm text-zinc-500">Belum ada kebutuhan output dipilih \u2014 buka tab Input</div></div>';
+
+ if(!cats.find(c=>c.id===S.gal))S.gal=cats[0].id;
+ const tabs=cats.map(c=>`<button onclick="setGal('${c.id}')" class="px-3 py-1.5 text-xs rounded-md transition-colors flex items-center gap-2 ${S.gal===c.id?'bg-zinc-700 text-zinc-200':'text-zinc-500 hover:text-zinc-300'}">${c.label}<span class="text-[10px] font-mono ${S.gal===c.id?'text-zinc-400':'text-zinc-600'}">${c.count}/${c.target}</span></button>`).join('');
+ const active=cats.find(c=>c.id===S.gal),imgs=p.results[active.id]||[];
+
+ let body;
+ if(imgs.length){
+  body=`<div class="grid grid-cols-2 md:grid-cols-3 gap-3">${imgs.map(src=>`<div class="relative group"><img src="${src}" class="gallery-img"/><div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center"><button class="px-2 py-1 bg-white/90 text-zinc-900 text-[10px] rounded font-medium">Download</button></div></div>`).join('')}</div>`;
+ }else{
+  const done=Object.values(p.steps).filter(s=>s.st==='done').length;
+  body=`<div onclick="upResult('${active.id}')" class="drop-zone p-10 text-center cursor-pointer" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="dropResult(event,'${active.id}')">
+   <div class="text-3xl mb-2">\ud83d\uddbc</div><div class="text-sm text-zinc-400 mb-1">Belum ada hasil ${active.label}</div>
+   <div class="text-[11px] text-zinc-600">${done}/12 step selesai</div></div>`}
+
+ let prompt='';
+ const pr=p.prompts[active.id];
+ if(typeof pr==='string'&&pr){
+  prompt=`<div class="mt-4 pt-4 border-t border-zinc-800">
+   <div class="flex items-center justify-between mb-2">
+    <div><div class="text-xs text-zinc-300 font-medium">Prompt Package \u2014 reusable</div>
+     <div class="text-[10px] text-zinc-600">${pr.split(/\s+/).length} kata \u00b7 7 blok terstruktur</div></div>
+    <div class="flex gap-2">
+     <button onclick="showPrompt('${active.id}')" class="text-[10px] px-2 py-1 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700">Lihat Penuh</button>
+     <button onclick="cpText(\`${pr.replace(/`/g,'\\`').replace(/\$/g,'\\$')}\`)" class="text-[10px] px-2 py-1 rounded bg-violet-600 text-white hover:bg-violet-500">Copy</button></div></div>
+   <div class="bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-[11px] text-zinc-400 font-mono leading-relaxed max-h-40 overflow-y-auto whitespace-pre-wrap">${pr}</div></div>`;
+ }else if(Array.isArray(pr)&&pr.length){
+  prompt=`<div class="mt-4 pt-4 border-t border-zinc-800"><div class="text-xs text-zinc-300 font-medium mb-2">Prompt Packages per Scene</div>
+   <div class="space-y-2">${pr.map((t,i)=>`<div class="bg-zinc-950 border border-zinc-800 rounded-lg p-3 flex items-center justify-between"><span class="text-[11px] text-zinc-400 font-mono">${t}</span><button onclick="cpText(\`${t.replace(/`/g,'')}\`)" class="text-[10px] text-violet-400 hover:text-violet-300">Copy</button></div>`).join('')}</div></div>`}
+
+ return `<div class="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4">
+  <div class="flex items-center justify-between mb-3">
+   <div class="flex gap-1 bg-zinc-950/50 border border-zinc-800 rounded-lg p-0.5">${tabs}</div>
+   ${imgs.length?'<button class="px-3 py-1.5 bg-violet-600 text-white text-xs rounded-lg hover:bg-violet-500">Download All</button>':''}</div>
+  ${body}${prompt}</div>`}
+
+// ═══ HUMAN GATE PANEL ═══
+function gatePanel(p){
+ if(!p.gate)return '';
+ const g=p.gate;
+ return `<div class="mb-3 bg-violet-500/5 border border-violet-500/30 rounded-xl overflow-hidden">
+  <div class="p-4 border-b border-violet-500/20 flex items-center justify-between">
+   <div class="flex items-center gap-3">
+    <div class="w-2 h-2 rounded-full bg-violet-400 pulse-dot"></div>
+    <div><div class="text-sm text-violet-200 font-medium">${g.title}</div>
+     <div class="text-[11px] text-violet-400/70">Step ${g.step} \u2014 pipeline menunggu keputusan kamu</div></div></div>
+   <span class="px-2 py-1 rounded-md bg-violet-500/20 text-[10px] text-violet-300 font-mono">needs_input</span></div>
+  <div class="p-4">
+   <div class="bg-zinc-950/50 border border-zinc-800 rounded-lg p-3 text-[11px] text-zinc-400 font-mono leading-relaxed max-h-64 overflow-y-auto whitespace-pre-wrap mb-3">${g.content}</div>
+   <textarea id="gate-note" placeholder="Catatan atau revisi (opsional) \u2014 misal: pakai Scene 1 dan 3 saja, Scene 2 ganti surface jadi kayu" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-xs text-zinc-300 h-20 resize-none focus:outline-none focus:border-violet-500/50 mb-3"></textarea>
+   <div class="flex gap-2">
+    <button onclick="approveGate()" class="flex-1 px-4 py-2.5 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-500 transition-colors">Setujui & Lanjutkan</button>
+    <button onclick="reviseGate()" class="flex-1 px-4 py-2.5 bg-amber-600 text-white text-sm font-medium rounded-lg hover:bg-amber-500 transition-colors">Minta Revisi</button>
+    <button onclick="stopGate()" class="px-4 py-2.5 bg-zinc-800 text-zinc-400 text-sm rounded-lg hover:bg-zinc-700 transition-colors">Stop</button></div>
+   <div class="text-[10px] text-zinc-600 mt-2 text-center">Keputusan akan dikirim ke Hermes via Kanban unblock</div></div></div>`}
+
+function render(){
+ const p=P();if(!p)return;
+ const done=Object.values(p.steps).filter(s=>s.st==='done').length;
+
+ const sb=PROJECTS.map(x=>{
+  const d=Object.values(x.steps).filter(s=>s.st==='done').length,pct=Math.round(d/12*100);
+  const gate=Object.values(x.steps).some(s=>s.st==='needs_input');
+  return `<div onclick="sel('${x.id}')" class="p-3 rounded-lg border cursor-pointer transition-all ${S.sel===x.id?'bg-zinc-800 border-zinc-600':'bg-zinc-900/50 border-zinc-800 hover:border-zinc-700'}">
+   <div class="flex items-start justify-between mb-2"><div class="min-w-0"><div class="text-sm font-semibold text-zinc-200 truncate">${x.brand}</div><div class="text-xs text-zinc-500 truncate">${x.product}</div></div>${badge(gate?'needs_input':d===12?'done':x.status==='running'?'running':'todo')}</div>
+   <div class="flex items-center gap-2 mb-1.5"><div class="flex-1 h-1 bg-zinc-800 rounded-full overflow-hidden"><div class="h-full bg-emerald-500 rounded-full" style="width:${pct}%"></div></div><span class="text-[10px] text-zinc-500 font-mono">${d}/12</span></div>
+   <div class="flex gap-1 flex-wrap">${x.req.hero?'<span class="text-[9px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">Hero</span>':''}${x.req.catalog?`<span class="text-[9px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">Cat \u00d7${x.req.catalogSku}</span>`:''}${x.req.campaign?`<span class="text-[9px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">Camp \u00d7${x.req.campaignScene}</span>`:''}</div></div>`}).join('');
+
+ const pipeline=STEPS.map(d=>stepCard(d,p.steps[d.s],S.exp===d.s)).join('<div class="h-1"></div>');
+ const events=p.events.map(e=>`<div class="flex gap-3 text-xs py-1.5 border-b border-zinc-800/30 last:border-0"><span class="text-zinc-600 font-mono whitespace-nowrap">${e.t}</span><span class="${e.ty==='done'?'text-emerald-400':e.ty==='fail'?'text-red-400':e.ty==='warn'?'text-amber-400':'text-zinc-500'}">${e.m}</span></div>`).join('');
+ const sys=[['Hermes','Online',1],['Kanban','12 task chain',1],['Profiles','13 \u00b7 19 skills',1],['OpenRouter','$3.84',1]]
+  .map(s=>`<div class="bg-zinc-900/50 border border-zinc-800 rounded-lg p-2.5 text-center"><div class="text-[10px] text-zinc-500">${s[0]}</div><div class="text-xs font-medium text-emerald-400">${s[1]}</div></div>`).join('');
+ const tabs=[['input','Input'],['pipeline','Pipeline'],['results','Results'],['log','Log']]
+  .map(t=>`<button onclick="setTab('${t[0]}')" class="px-3 py-1.5 text-xs rounded-md transition-colors ${S.tab===t[0]?'bg-zinc-700 text-zinc-200':'text-zinc-500 hover:text-zinc-300'}">${t[1]}</button>`).join('');
+
+ let content;
+ if(S.tab==='input')content=tabInput(p);
+ else if(S.tab==='pipeline')content=`<div class="space-y-1">${pipeline}</div>`;
+ else if(S.tab==='results')content=tabResults(p);
+ else content=`<div class="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4">${events}</div>`;
+
+ document.getElementById('app').innerHTML=`<div class="max-w-6xl mx-auto p-4">
+  <div class="flex items-center justify-between mb-5">
+   <div class="flex items-center gap-3">
+    <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-600 to-indigo-700 flex items-center justify-center shadow-lg shadow-violet-900/30"><span class="text-white text-sm font-bold">V</span></div>
+    <div><h1 class="text-base font-semibold text-zinc-100 tracking-tight">VLT Pipeline</h1><p class="text-[10px] text-zinc-500">Visual Language Transfer \u2014 Hermes Monitor</p></div></div>
+   <div class="flex items-center gap-1.5" id="conn-badge"><div class="w-2 h-2 rounded-full bg-zinc-500"></div><span class="text-[10px] text-zinc-500">Menghubungkan...</span></div></div>
+  <div class="grid grid-cols-4 gap-2 mb-4">${sys}</div>
+  <div class="flex gap-4">
+   <div class="w-56 shrink-0 space-y-2 hidden md:block">
+    <div class="text-[10px] text-zinc-500 uppercase tracking-widest mb-2 px-1">Projects</div>${sb}
+    <button onclick="newProj()" class="w-full p-2.5 rounded-lg border border-dashed border-zinc-700 text-xs text-zinc-500 hover:border-violet-500/50 hover:text-violet-400 transition-colors">+ New Project</button></div>
+   <div class="flex-1 min-w-0">
+    ${gatePanel(p)}
+    <div class="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4 mb-3">
+     <div class="flex items-start justify-between mb-3">
+      <div><h2 class="text-sm font-semibold text-zinc-100">${p.brand} \u2014 ${p.product}</h2>
+       <span class="text-[10px] text-zinc-500 font-mono">${p.id} \u00b7 ${p.created}</span></div>
+      ${badge(done===12?'done':p.gate?'needs_input':p.status==='running'?'running':'todo')}</div>
+     <div class="grid grid-cols-2 gap-3">${bar(p.budget.u,p.budget.l,'Generation Budget')}${bar(done,12,'Pipeline Progress')}</div></div>
+    <div class="flex gap-1 mb-3 bg-zinc-900/30 border border-zinc-800 rounded-lg p-0.5 w-fit">${tabs}</div>
+    ${content}</div></div>
+  <div class="mt-6 pt-3 border-t border-zinc-800/40 flex items-center justify-between">
+   <span class="text-[10px] text-zinc-700">VLT Pipeline Monitor v5.0 \u2014 Vercel + Proxy</span>
+   <span class="text-[10px] text-zinc-700">3 human gates \u00b7 anti-AI \u00b7 dual model routing</span></div></div>`}
+
+// ═══ ACTIONS ═══
+function sel(id){S.sel=id;S.exp=null;S.gal='hero';render()}
+function tgl(s){S.exp=S.exp===s?null:s;render()}
+function setTab(t){S.tab=t;render()}
+function setGal(g){S.gal=g;render()}
+function tglReq(k){const p=P();if(!p)return;p.req[k]=!p.req[k];
+ if(k==='catalog'&&p.req.catalog&&!p.req.catalogSku)p.req.catalogSku=5;
+ if(k==='campaign'&&p.req.campaign&&!p.req.campaignScene)p.req.campaignScene=3;
+ p.budget.l=Math.max(estimate(p.req),10);render()}
+function setCount(k,v){const p=P();if(!p)return;p.req[k]=Math.max(1,Math.min(50,parseInt(v)||1));
+ p.budget.l=Math.max(estimate(p.req),10);render()}
+
+function upImg(t){const i=document.createElement('input');i.type='file';i.accept='image/*';i.multiple=true;i.onchange=e=>readImgs(e.target.files,t);i.click()}
+function dropImg(e,t){e.preventDefault();e.currentTarget.classList.remove('drag-over');readImgs(e.dataTransfer.files,t)}
+function readImgs(f,t){const p=P();if(!p)return;Array.from(f).forEach(x=>{if(!x.type.startsWith('image/'))return;
+ const r=new FileReader();r.onload=e=>{(t==='ref'?p.refImages:p.prodImages).push(e.target.result);render()};r.readAsDataURL(x)})}
+function rmImg(t,i){const p=P();if(!p)return;(t==='ref'?p.refImages:p.prodImages).splice(i,1);render()}
+function upResult(c){const i=document.createElement('input');i.type='file';i.accept='image/*';i.multiple=true;i.onchange=e=>readRes(e.target.files,c);i.click()}
+function dropResult(e,c){e.preventDefault();e.currentTarget.classList.remove('drag-over');readRes(e.dataTransfer.files,c)}
+function readRes(f,c){const p=P();if(!p)return;Array.from(f).forEach(x=>{if(!x.type.startsWith('image/'))return;
+ const r=new FileReader();r.onload=e=>{p.results[c].push(e.target.result);render()};r.readAsDataURL(x)})}
+function cpText(t){navigator.clipboard.writeText(t)}
+
+function showPrompt(cat){const p=P();if(!p)return;
+ const pr=p.prompts[cat];if(!pr)return;
+ document.getElementById('modal').innerHTML=`<div class="modal-bg" onclick="closeModal()"><div class="modal" onclick="event.stopPropagation()">
+  <div class="p-4 border-b border-zinc-800 flex items-center justify-between sticky top-0 bg-zinc-900">
+   <div><div class="text-sm font-semibold text-zinc-100">Prompt Package \u2014 ${cat}</div>
+    <div class="text-[10px] text-zinc-500">${pr.split(/\s+/).length} kata \u00b7 siap dipakai ulang</div></div>
+   <div class="flex gap-2"><button onclick="cpText(document.getElementById('full-pr').innerText)" class="text-xs px-3 py-1.5 bg-violet-600 text-white rounded-lg hover:bg-violet-500">Copy</button>
+   <button onclick="closeModal()" class="text-xs px-3 py-1.5 bg-zinc-800 text-zinc-400 rounded-lg hover:bg-zinc-700">Tutup</button></div></div>
+  <div id="full-pr" class="p-4 text-[11px] text-zinc-300 font-mono leading-relaxed whitespace-pre-wrap">${pr}</div></div></div>`}
+function closeModal(){document.getElementById('modal').innerHTML=''}
+
+async function approveGate(){const p=P();if(!p||!p.gate)return;
+ const note=document.getElementById('gate-note')?.value.trim();
+ const btn=event.target;btn.textContent='Mengirim...';btn.disabled=true;
+ // kirim ke Hermes lewat API (kalau task_id ada)
+ let ok=true;
+ if(p.gate.task_id){ok=await sendGate(p.gate.task_id,'approve',note)}
+ if(ok){
+  const st=p.steps[p.gate.step];if(st)st.st='done';
+  const next=STEPS.find(s=>s.s>p.gate.step);if(next)p.steps[next.s]={st:'running'};
+  p.events.push({t:new Date().toTimeString().slice(0,5),m:`Step ${p.gate.step} disetujui${note?' \u2014 '+note:''}${p.gate.task_id?' (dikirim ke Hermes)':''}`,ty:'done'});
+  p.gate=null;render();
+ }else{
+  alert('Gagal mengirim ke Hermes. Cek koneksi API.');btn.textContent='Setujui & Lanjutkan';btn.disabled=false;
+ }}
+async function reviseGate(){const p=P();if(!p||!p.gate)return;
+ const note=document.getElementById('gate-note')?.value.trim();
+ if(!note){alert('Tulis catatan revisi dulu');return}
+ const btn=event.target;btn.textContent='Mengirim...';btn.disabled=true;
+ let ok=true;
+ if(p.gate.task_id){ok=await sendGate(p.gate.task_id,'revise',note)}
+ p.events.push({t:new Date().toTimeString().slice(0,5),m:`Revisi diminta \u2014 ${note}`,ty:'warn'});
+ const st=p.steps[p.gate.step];if(st)st.act='Merevisi sesuai catatan...';
+ btn.textContent='Minta Revisi';btn.disabled=false;render()}
+async function stopGate(){const p=P();if(!p)return;
+ if(!confirm('Hentikan pipeline project ini?'))return;
+ if(p.gate&&p.gate.task_id){await sendGate(p.gate.task_id,'stop','')}
+ p.status='stopped';p.gate=null;
+ p.events.push({t:new Date().toTimeString().slice(0,5),m:'Pipeline dihentikan user',ty:'fail'});render()}
+
+function newProj(){
+ const brand=prompt('Nama Brand:');if(!brand)return;
+ const product=prompt('Nama Produk:');if(!product)return;
+ const n=new Date();
+ const id='vlt-'+n.getFullYear()+String(n.getMonth()+1).padStart(2,'0')+String(n.getDate()).padStart(2,'0')+'-'+String(PROJECTS.length+1).padStart(3,'0');
+ const req={hero:true,catalog:false,catalogSku:5,campaign:false,campaignScene:3};
+ PROJECTS.unshift({id,brand,product,status:'running',created:n.toISOString().slice(0,16).replace('T',' '),
+  req,refImages:[],prodImages:[],model:'\u2014 (ditentukan Step 5)',modelReason:'Menunggu Mode Selection',
+  results:{hero:[],catalog:[],campaign:[]},prompts:{hero:null,catalog:null,campaign:[]},gate:null,
+  steps:Object.fromEntries(STEPS.map(s=>[s.s,{st:'todo'}])),budget:{u:0,l:Math.max(estimate(req),10)},
+  events:[{t:n.toTimeString().slice(0,5),m:'Project dibuat \u2014 pilih kebutuhan output',ty:'info'}]});
+ S.sel=id;S.tab='input';S.gal='hero';render()}
+
+render();
+checkApi();
+</script>
+</body>
+</html>
